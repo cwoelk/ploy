@@ -19,7 +19,7 @@ var cmd = argv._[0];
 if (cmd === 'help' || argv.h || argv.help || process.argv.length <= 2) {
     var h = argv.h || argv.help || argv._[1];
     var helpFile = typeof h === 'string' ? h : 'usage';
-    
+
     var rs = fs.createReadStream(__dirname + '/' + helpFile + '.txt')
     rs.on('error', function () {
         console.log('No help found for ' + h);
@@ -35,7 +35,7 @@ else if (cmd === 'move' || cmd === 'mv') {
     var dst = argv.dst || argv._.shift();
     getRemote(function (err, remote) {
         if (err) return error(err);
-        
+
         var hq = hyperquest(remote + '/move/' + src + '/' + dst);
         hq.pipe(process.stdout);
         hq.on('error', function (err) {
@@ -49,7 +49,7 @@ else if (cmd === 'restart') {
     var name = argv.name || argv._.shift();
     getRemote(function (err, remote) {
         if (err) return error(err);
-        
+
         var hq = hyperquest(remote + '/restart/' + name);
         hq.pipe(process.stdout);
         hq.on('error', function (err) {
@@ -63,7 +63,7 @@ else if (cmd === 'remove' || cmd === 'rm') {
     var name = argv.name || argv._.shift();
     getRemote(function (err, remote) {
         if (err) return error(err);
-        
+
         var hq = hyperquest(remote + '/remove/' + name);
         hq.pipe(process.stdout);
         hq.on('error', function (err) {
@@ -74,13 +74,13 @@ else if (cmd === 'remove' || cmd === 'rm') {
 }
 else if (cmd === 'log' && argv._.length) {
     argv._.shift();
-    
+
     getRemote(function (err, remote) {
         if (err) return error(err);
         var begin = defined(argv.begin, argv.b);
         var end = defined(argv.end, argv.e);
         var follow = defined(argv.follow, argv.f);
-        
+
         if (argv.n === 0) {
             end = 0;
         }
@@ -88,66 +88,67 @@ else if (cmd === 'log' && argv._.length) {
             begin = -argv.n;
             end = undefined;
         }
-        
+
         if (begin === undefined && process.stdout.rows) {
             begin = 2 - process.stdout.rows;
         }
-        
+
         var params = { begin: begin, end: end, follow: follow };
         var showColor = defined(argv.color, process.stdout.isTTY);
         if (showColor === 'false') showColor = false;
-        
+
         params.name = argv.name || (argv._.length ? argv._ : undefined);
         if (Array.isArray(params.name) && params.name.length === 1) {
             params.name = params.name[0];
         }
         var multiMode = !params.name || Array.isArray(params.name);
-        
+
         Object.keys(params).forEach(function (key) {
             if (params[key] === undefined) delete params[key];
         });
-        
+
         var href = remote + '/log?' + qs.stringify(params);
         var hq = hyperquest(href);
         hq.on('error', function (err) {
             var msg = 'Error connecting to ' + remote + ': ' + err.message;
             console.error(msg);
         });
-        
+
         var keys = [];
         hq.pipe(split()).pipe(through(function (line) {
             if (!multiMode) return this.queue(line.replace(/^\d+ /, '') + '\n');
-            
+
             var m = /^(\S+)/.exec(line);
             var branch = m && m[1];
             var msg = line.replace(/^\S+ \d+ /, '');
-            
+
             if (!showColor) return this.queue('[' + branch + '] ' + msg + '\n');
-            
+
             if (keys.indexOf(branch) < 0) keys.push(branch);
-            
+
             var color = 31 + (keys.indexOf(branch) % 6);
             this.queue(
                 '\033[01;' + color + 'm[' + branch + ']'
                 + '\033[0m ' + msg + '\n'
             );
-            
+
         })).pipe(process.stdout);
     });
 }
 else if (true || cmd === 'server') {
     // `ploy` server mode without `ploy server` is scheduled for demolition
     if (cmd === 'server') argv._.shift();
-    
+
     var dir = path.resolve(argv.dir || argv.d || argv._.shift() || '.');
     var authFile = argv.auth || argv.a;
     var opts = {
         repodir: path.join(dir, 'repo'),
         workdir: path.join(dir, 'work'),
         logdir: path.join(dir, 'log'),
+        datadir: path.join(dir, 'data'),
         auth: authFile && JSON.parse(fs.readFileSync(authFile))
     };
-    
+
     var server = ploy(opts);
     if (!argv.q && !argv.quiet) {
         server.on('spawn', function (ps) {
@@ -156,7 +157,7 @@ else if (true || cmd === 'server') {
         });
     }
     server.listen(argv.port || argv.p || 80);
-    
+
     if (argv.ca || argv.pfx) {
         var sopts = {};
         if (argv.ca) sopts.ca = fs.readFileSync(argv.ca);
@@ -192,10 +193,10 @@ function getRemotes (cb) {
         if (!/\/_ploy\b/.test(r)) r = r.replace(/\/*$/, '/_ploy');
         return cb(null, [ r.replace(/\/_ploy\b.*/, '/_ploy') ]);
     }
-    
+
     exec('git remote -v', function (err, stdout, stderr) {
         if (err) return cb(err);
-        
+
         var remotes = stdout.split('\n').reduce(function (acc, line) {
             var xs = line.split(/\s+/);
             var name = xs[0], href = xs[1];
@@ -205,7 +206,7 @@ function getRemotes (cb) {
             }
             return acc;
         }, {});
-        
+
         if (r) cb(null, [ remotes[r] ].filter(Boolean));
         else cb(null, Object.keys(remotes).map(function (name) {
             return remotes[name];
@@ -215,10 +216,10 @@ function getRemotes (cb) {
 
 function showList (indent) {
     if (!indent) indent = 0;
-    
+
     getRemote(function (err, remote) {
         if (err) return error(err);
-        
+
         var hq = hyperquest(remote + '/list');
         hq.pipe(split()).pipe(through(function (line) {
             this.queue(Array(indent+1).join(' ') + line + '\n');
