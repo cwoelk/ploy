@@ -45,6 +45,8 @@ function Ploy (opts) {
         self.logdir = logdir(opts.logdir);
     }
 
+    self.datadir = opts.datadir;
+
     self.ci = cicada(opts);
     self.ci.on('commit', self.deploy.bind(self));
 
