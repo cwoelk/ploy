@@ -24,7 +24,8 @@ module.exports = function (opts) {
         opts = {
             repodir: path.resolve(opts + '/repo'),
             workdir: path.resolve(opts + '/work'),
-            logdir: path.resolve(opts + '/log')
+            logdir: path.resolve(opts + '/log'),
+            datadir: path.resolve(opts + '/data')
         };
     }
     return new Ploy(opts);
@@ -40,13 +41,13 @@ function Ploy (opts) {
     self._keys = {};
     self.workdir = opts.workdir;
     if (opts.logdir) {
-        mkdirp(opts.logdir);
+        mkdirp.sync(opts.logdir);
         self.logdir = logdir(opts.logdir);
     }
-    
+
     self.ci = cicada(opts);
     self.ci.on('commit', self.deploy.bind(self));
-    
+
     self.bouncers = [];
     self.auth = opts.auth;
     self.restore();
@@ -66,7 +67,7 @@ Ploy.prototype.createBouncer = function (opts) {
             || parts.slice(0,-1).join('.')
         ;
         var branch = (self.branches[subdomain] && subdomain) || 'master';
-        
+
         if (RegExp('^/_ploy\\b').test(req.url)) {
             if (self.auth) {
                 var au = req.headers.authorization;
@@ -87,7 +88,7 @@ Ploy.prototype.createBouncer = function (opts) {
             res.statusCode = 404;
             res.end('host not found\n');
         }
-        
+
         function prohibit (msg) {
             res.statusCode = 401;
             res.setHeader('www-authenticate', 'basic');
@@ -99,7 +100,7 @@ Ploy.prototype.createBouncer = function (opts) {
 
 Ploy.prototype.restore = function () {
     var self = this;
-    
+
     fs.readdir(self.ci.repodir, function (err, repos) {
         if (err) return;
         repos.forEach(function (repo) {
@@ -110,7 +111,7 @@ Ploy.prototype.restore = function () {
             });
         });
     });
-    
+
     function readCommit (repo, ref) {
         var file = path.join(self.ci.repodir, repo, 'refs', 'heads', ref);
         fs.readFile(file, function (err, src) {
@@ -118,19 +119,19 @@ Ploy.prototype.restore = function () {
             checkExisting(repo, ref, String(src).trim());
         });
     }
-    
+
     function checkExisting (repo, ref, hash) {
         var file = path.join(self.workdir, repo + '.' + ref + '.json');
         fs.readFile(file, function (err, src) {
             if (err) return restore(repo, ref, hash);
             try { var commit = JSON.parse(String(src)) }
             catch (e) { return restore(repo, ref, hash) }
-            
+
             commit._skipInstall = true;
             self.deploy(commit);
         });
     }
-    
+
     function restore (repo, ref, commit) {
         var dir = path.join(self.ci.repodir, repo);
         var target = {
@@ -147,21 +148,26 @@ Ploy.prototype.restore = function () {
 
 Ploy.prototype.deploy = function (commit) {
     var self = this;
-    
+
     var env = clone(process.env);
+    var datadir = path.join(this.datadir, commit.branch);
+
+    mkdirp.sync(datadir);
+    env.DATADIR = datadir;
+
     var procs = spawnProcess(commit, env);
     procs.on('error', function (err) { console.error(err) });
-    
+
     procs.on('spawn', function (ps, sp) {
         self.emit('spawn', ps, sp);
     });
-    
+
     procs.on('output', function (name, stream) {
         if (self.logdir) {
             stream.pipe(self.logdir.createWriteStream(name));
         }
         self.emit('output', name, stream);
-        
+
         [ 'start', 'restart', 'exit' ].forEach(function (ev) {
             procs.on(ev, function (name, ps) {
                 var logMessage = {
@@ -178,25 +184,25 @@ Ploy.prototype.deploy = function (commit) {
             });
         });
     });
-    
+
     procs.on('start', function (name, ps) {
         self.emit('start', name, ps);
-        
+
         var to = setTimeout(function () {
             // didn't crash in 3 seconds, add to routing table
             addServer(name, ps);
         }, self.branches[name] ? self.delay : 0);
-        
+
         ps.once('exit', function (code) {
             clearTimeout(to);
         });
     });
-    
+
     procs.on('restart', function (name, ps) {
         self.emit('restart', name, ps);
         addServer(name, ps);
     });
-    
+
     function addServer (name, ps) {
         if (self.branches[name]) {
             self.remove(name);
@@ -210,13 +216,13 @@ Ploy.prototype.deploy = function (commit) {
             process: ps,
             kill: ps.killer
         });
-        
+
         ps.once('exit', function (code) {
             var b = self.branches[name];
             if (b && b.hash === commit.hash) ps.respawn();
         });
     }
-    
+
 };
 
 Ploy.prototype.add = function (name, rec) {
@@ -262,7 +268,7 @@ Ploy.prototype.remove = function (name) {
     }
     delete this.branches[name];
     this._rescanRegExp();
-    
+
     spawn('git', [ 'branch', '-D', name ], {
         cwd: path.join(this.ci.repodir, b.repo)
     });
@@ -288,7 +294,7 @@ Ploy.prototype.listen = function () {
         return acc;
     }, { list: [], opts: {} });
     if (args.opts.port) args.list.unshift(Number(args.opts.port));
-    
+
     var b = this.createBouncer(args.opts);
     this.bouncers.push(b);
     b.listen.apply(b, args.list);
@@ -310,7 +316,7 @@ Ploy.prototype.close = function () {
 Ploy.prototype.handle = function (req, res) {
     var self = this;
     var m;
-    
+
     if (RegExp('^/_ploy/[^?]+\\.git\\b').test(req.url)) {
         req.url = req.url.replace(RegExp('^/_ploy/'), '/');
         self.ci.handle(req, res);
@@ -344,10 +350,10 @@ Ploy.prototype.handle = function (req, res) {
         if (isNaN(b)) b = undefined;
         if (isNaN(e)) e = undefined;
         req.connection.setTimeout(0);
-        
+
         var ld = self.logdir.open(params.name);
         res.on('close', function () { ld.close() });
-        
+
         if (falsey(params.follow)) {
             var s = ld.slice(b, e);
             s.on('error', function (err) { res.end(err + '\n') });
